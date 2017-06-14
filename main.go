@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
 
 	"database/sql"
 	_ "github.com/mattn/go-sqlite3"
@@ -48,6 +50,21 @@ func (r *Request) UnmarshalTo(data interface{}) (err error) {
 	return
 }
 
+func (r *Request) MatchURL(pat string) (matches []string, ok bool) {
+	re, _ := regexp.Compile(pat)
+	m := re.FindStringSubmatch(r.URL.Path)
+
+	if len(m) == 0 {
+		ok = false
+		matches = []string{}
+	} else {
+		ok = true
+		matches = m[1:]
+	}
+
+	return
+}
+
 type Response struct {
 	http.ResponseWriter
 }
@@ -69,6 +86,35 @@ type Account struct {
 	ID   int64  `"json":"id"`
 	Name string `"json":"name"`
 	Slug string `"json":"slug"`
+}
+
+func Find(db *sql.DB, id string) (*Account, error) {
+	var count int
+
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM accounts WHERE id = ? OR slug = ?",
+		id, id,
+	).Scan(&count)
+
+	if err != nil || count != 1 {
+		return nil, errors.New("Record not found")
+	}
+
+	account := &Account{}
+
+	stmt := `
+		SELECT id, name, slug
+		FROM   accounts
+		WHERE  id = ? OR slug = ?;
+	`
+
+	err = db.QueryRow(stmt, id, id).Scan(&account.ID, &account.Name, &account.Slug)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return account, nil
 }
 
 func (a *Account) Create(db *sql.DB) (err error) {
@@ -148,6 +194,25 @@ func main() {
 		}
 
 		resp.JSON(http.StatusCreated, account)
+	})
+
+	mux.HandleFunc("/accounts/", func(w http.ResponseWriter, r *http.Request) {
+		req := NewRequest(r)
+		resp := NewResponse(w)
+
+		matches, ok := req.MatchURL(`^/accounts/(.+)$`)
+
+		if !ok {
+			resp.JSON(http.StatusNotFound, H{"message": "Not found"})
+			return
+		}
+
+		if account, _ := Find(db, matches[0]); account != nil {
+			resp.JSON(http.StatusOK, account)
+			return
+		}
+
+		resp.JSON(http.StatusNotFound, H{"message": "Not found"})
 	})
 
 	server := http.Server{Handler: mux, Addr: ":9000"}
