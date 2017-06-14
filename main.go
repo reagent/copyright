@@ -65,6 +65,18 @@ func (r *Request) MatchURL(pat string) (matches []string, ok bool) {
 	return
 }
 
+func (r *Request) MethodIn(verb string, verbs ...string) bool {
+	all := append([]string{verb}, verbs...)
+
+	for _, v := range all {
+		if r.Method == v {
+			return true
+		}
+	}
+
+	return false
+}
+
 type Response struct {
 	http.ResponseWriter
 }
@@ -174,7 +186,7 @@ func main() {
 		req := NewRequest(r)
 		resp := NewResponse(w)
 
-		if r.Method != "POST" {
+		if !req.MethodIn("POST") {
 			resp.JSON(http.StatusBadRequest, H{"message": "Invalid request type"})
 			return
 		}
@@ -199,6 +211,11 @@ func main() {
 	mux.HandleFunc("/accounts/", func(w http.ResponseWriter, r *http.Request) {
 		req := NewRequest(r)
 		resp := NewResponse(w)
+
+		if !req.MethodIn("GET") {
+			resp.JSON(http.StatusBadRequest, H{"message": "Invalid request type"})
+			return
+		}
 
 		matches, ok := req.MatchURL(`^/accounts/(.+)$`)
 
