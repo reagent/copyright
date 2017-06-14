@@ -17,6 +17,54 @@ import (
 
 type H map[string]string
 
+type Request struct {
+	*http.Request
+
+	body *[]byte
+}
+
+func NewRequest(r *http.Request) *Request {
+	return &Request{r, nil}
+}
+
+func (r *Request) cachedBody() []byte {
+	body := []byte{}
+
+	if r.body == nil {
+		tmp, err := ioutil.ReadAll(r.Body)
+
+		if err == nil {
+			body = tmp
+		}
+
+		r.body = &body
+	}
+
+	return *r.body
+}
+
+func (r *Request) UnmarshalTo(data interface{}) (err error) {
+	err = json.Unmarshal(r.cachedBody(), &data)
+	return
+}
+
+type Response struct {
+	http.ResponseWriter
+}
+
+func NewResponse(w http.ResponseWriter) *Response {
+	return &Response{w}
+}
+
+func (r *Response) JSON(code int, data interface{}) {
+	b, _ := json.Marshal(data)
+
+	r.Header().Set("Content-Type", "application/json")
+	r.WriteHeader(code)
+	r.Write(b)
+	r.Write([]byte{'\n'})
+}
+
 type Account struct {
 	ID   int64  `"json":"id"`
 	Name string `"json":"name"`
@@ -77,43 +125,29 @@ func main() {
 			account Account
 		)
 
-		w.Header().Add("Content-Type", "application/json")
+		req := NewRequest(r)
+		resp := NewResponse(w)
 
 		if r.Method != "POST" {
-			b, _ := json.Marshal(H{"message": "Invalid request type"})
-
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(b)
-			w.Write([]byte{'\n'})
-
+			resp.JSON(http.StatusBadRequest, H{"message": "Invalid request type"})
 			return
 		}
 
-		body, err := ioutil.ReadAll(r.Body)
+		err = req.UnmarshalTo(&account)
 
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		err = json.Unmarshal(body, &account)
-
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+			resp.JSON(http.StatusBadRequest, H{"message": err.Error()})
 			return
 		}
 
 		err = account.Create(db)
 
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+			resp.JSON(http.StatusBadRequest, H{"message": err.Error()})
 			return
 		}
 
-		b, _ := json.Marshal(account)
-
-		w.Write(b)
-		w.Write([]byte{'\n'})
+		resp.JSON(http.StatusCreated, account)
 	})
 
 	server := http.Server{Handler: mux, Addr: ":9000"}
